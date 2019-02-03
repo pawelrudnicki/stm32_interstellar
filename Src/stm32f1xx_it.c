@@ -36,6 +36,7 @@
 #include "stm32f1xx_it.h"
 
 /* USER CODE BEGIN 0 */
+extern uint32_t speed_dash;
 extern uint8_t isCounting;
 extern uint8_t index_timing;
 extern uint32_t timer_ms;
@@ -186,16 +187,16 @@ void SysTick_Handler(void)
   HAL_IncTick();
   HAL_SYSTICK_IRQHandler();
   /* USER CODE BEGIN SysTick_IRQn 1 */
-  if(timer_ms) {
-	  timer_ms--;
-  }
+  //if(timer_ms) {
+	  //timer_ms--;
+  //}
   if(!HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13)){
 	  count_morse++;
 	  gap_time=0;
   }
   if(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) && TIMING_TABLE[0] != 0 && isCounting != 0){
 	  gap_time++;
-	  if(gap_time >= 5000){
+	  if(gap_time >= speed_dash){
 		  if(index_timing >= 255)index_timing=0;
 		  TIMING_TABLE[index_timing] = 1;
 		  index_timing++;

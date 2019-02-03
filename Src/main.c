@@ -78,12 +78,13 @@ static void MX_I2C1_Init(void);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
-void delay_ms(uint16_t time);
+
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
-volatile uint16_t speed_dot = 250;
-volatile uint16_t speed_dash = 750;
+
+volatile uint32_t speed_dot = 250;
+volatile uint32_t speed_dash = 750;
 volatile uint8_t index_timing = 0;
 volatile uint32_t timer_ms = 0;
 volatile uint32_t count_morse = 0;
@@ -101,6 +102,10 @@ char SLIP_PAYLOAD[255] = {'\0'};
 char Buff_Rx [BUFF_SIZE] = {'\0'};
 char Buff_Tx [BUFF_SIZE] = {'\0'};
 
+char txMorsetable[253] = {'\0'};
+volatile uint8_t emptytxmorsetable=0;
+volatile uint8_t busytxmorsetable=0;
+
 int TIMING_TABLE[255] = {0};
 
 volatile uint8_t Busy_Morse_Rx = 0;
@@ -115,30 +120,44 @@ volatile uint8_t Empty_Tx = 0;
 
 uint8_t isCounting = 1;
 
-uint32_t xms20 = 0;
-uint32_t xms1 = 0;
-uint8_t x02s;
-uint8_t x001s;
+
+volatile uint32_t xms20 = 0;
+volatile uint32_t xms1 = 0;
+volatile uint8_t x02s;
+volatile uint8_t x001s;
+
+volatile uint32_t xmsdot = 0;
+volatile uint32_t xmsdash = 0;
+volatile uint32_t xmsspace = 0;
 
 volatile static uint8_t isStart = 0;
 volatile static uint8_t isEnd = 0;
 volatile static uint8_t isEsc = 0;
+
+volatile uint32_t kropka;
+volatile uint32_t kreska;
+volatile uint32_t spacja;
+
+volatile uint8_t isDot=0;
+volatile uint8_t isDash=0;
+
+volatile uint8_t dotFlag=0;
+volatile uint8_t dashFlag=0;
+volatile uint8_t spaceFlag=0;
+
+volatile uint8_t x_dot=0;
+volatile uint8_t x_dash=0;
+volatile uint8_t x_space=0;
+
+volatile uint8_t alpha = 0;
+
+char testowa[249] = {'\0'};
 /*START OF CALLBACKS*/
-void HAL_SYSTICK_Callback(void){
-	xms20++;
-	xms1++;
-	if(xms20 >= 20){
-		xms20=0;
-		x02s=1;
-	}
-	if(xms1 >= 5000){
-		xms1=0;
-		x001s=1;
-	}
-}
+
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 	if(GPIO_Pin == GPIO_PIN_13){
+		alpha = 1;
 		if(index_timing >= 255) index_timing = 0;
 		TIMING_TABLE[index_timing] = count_morse;
 		index_timing++;
@@ -210,65 +229,37 @@ void lcd_send_string (char *str)
 }
 /*LCD END*/
 
+
 void changeTimeToMorse(){
 	uint8_t tmpindex;
+	uint8_t smallest = TIMING_TABLE[0];
+
+	for(volatile int i = 1; i<index_timing; i++){
+		if(TIMING_TABLE[i] < smallest && TIMING_TABLE[i] != 1){
+			smallest = TIMING_TABLE[i];
+		}
+	}
+
+	if(smallest >= 100){
+		kropka = smallest;
+		kreska = (kropka*3);
+	} else{
+		kropka = 250;
+		kreska = 750;
+	}
+
 	for(tmpindex=0; tmpindex<index_timing; tmpindex++){
-		if(TIMING_TABLE[tmpindex] <= 1000 && TIMING_TABLE[tmpindex] > 1){
+		if(((kropka - 50) <= TIMING_TABLE[tmpindex]) && (TIMING_TABLE[tmpindex] < kreska) && (TIMING_TABLE[tmpindex] > 1)){
 			dotsNdashes[tmpindex] = '.';
 		}
-		else if(TIMING_TABLE[tmpindex] > 1000){
+
+		else if(TIMING_TABLE[tmpindex] >= kreska){
 			dotsNdashes[tmpindex] = '-';
 		}
 		else if(TIMING_TABLE[tmpindex] == 1){
 			dotsNdashes[tmpindex] = 'q';
 		}
 	}
-}
-
-void delay_ms(uint16_t time){
-	timer_ms = time;
-	while(timer_ms > 0){};
-}
-void dash() { USART_fsend("-"); }
-void dot() { USART_fsend("."); }
-
-void conv(uint8_t decimal) {
-	//lcd_send_cmd(0x01);
-	if (decimal) {
-		conv(decimal/2);
-			if (decimal != 1){
-				if(decimal%2){
-					//dash();
-					 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-					 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
-					 USART_fsend("-");
-					 lcd_send_string("-");
-					 delay_ms(speed_dash);
-					 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-					 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-					 delay_ms(speed_dash);
-				}
-				else{
-					//dot();
-					 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-					 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
-					 USART_fsend(".");
-					 lcd_send_string(".");
-					 delay_ms(speed_dot);
-					 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-					 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
-					 delay_ms(speed_dot);
-				}
-			}
-	}
-}
-
-void morse(char c) {
-	if (c >= 'a' && c <= 'z') c -= 32;
-	if (c < 'A' || c > 'Z') return;
-	uint8_t i = 0;
-	while (latin[++i] != c);
-	conv(i);
 }
 
 void USART_fsend(char* format,...){
@@ -296,6 +287,78 @@ va_list arglist;
 		Empty_Tx=idx;
 	}
 	__enable_irq();
+}
+
+void dash() {
+	isDash=1;
+	if(isDash==1){
+		txMorsetable[emptytxmorsetable]='-';
+		emptytxmorsetable++;
+		txMorsetable[emptytxmorsetable]='y';
+		emptytxmorsetable++;
+		if(emptytxmorsetable>=253)emptytxmorsetable=0;
+		isDash=0;
+	}
+}
+
+void dot() {
+	isDot=1;
+	if(isDot==1){
+		txMorsetable[emptytxmorsetable]='.';
+		emptytxmorsetable++;
+		txMorsetable[emptytxmorsetable]='x';
+		emptytxmorsetable++;
+		if(emptytxmorsetable>=253)emptytxmorsetable=0;
+		isDot=0;
+	}
+}
+
+void conv(uint8_t decimal) {
+	//lcd_send_cmd(0x01);
+	if (decimal) {
+		conv(decimal/2);
+			if (decimal != 1){
+				if(decimal%2){
+					 dash();
+				}
+				else{
+					 dot();
+				}
+			}
+	}
+}
+
+void morse(char c) {
+	if (c >= 'a' && c <= 'z') c -= 32;
+	if (c < 'A' || c > 'Z') return;
+	uint8_t i = 0;
+	while (latin[++i] != c);
+	conv(i);
+	txMorsetable[emptytxmorsetable]=' ';
+	emptytxmorsetable++;
+	if(emptytxmorsetable >= 253)emptytxmorsetable=0;
+}
+
+
+void HAL_SYSTICK_Callback(void){
+	xmsdot++;
+	xmsdash++;
+	xmsspace++;
+
+	if(xmsdot >= 100){
+		xmsdot=0;
+		dotFlag=1;
+	}
+
+	if(xmsdash >= 300){
+		xmsdash=0;
+		dashFlag=1;
+	}
+
+	if(xmsspace >= 300){
+		xmsspace=0;
+		spaceFlag=1;
+	}
 }
 
 uint8_t czypustyRx(){
@@ -346,10 +409,10 @@ uint8_t MORSE_getchar(){
 
 
 void morse_encode(){
-
-	for(int i=6; i<=253; i++){
+	for(volatile uint8_t i=6; i<=253; i++){
 		MORSE_BUFF_RX[Empty_Morse_Rx] = SLIP_PAYLOAD[i];
 		morse(SLIP_PAYLOAD[i]);
+		//USART_fsend(" ");
 		if(SLIP_PAYLOAD[i] == '\0'){
 			Empty_Morse_Rx=0;
 			break;
@@ -366,7 +429,8 @@ typedef struct
 } morse_table_t;
 
 uint8_t MORSE_DECODE(){
-    char input[253];
+    char input[249];
+    volatile uint8_t x = 0;
     morse_table_t table[] = { {".-", "A"},
                               {"-...", "B"},
                               {"-.-.", "C"},
@@ -402,43 +466,47 @@ uint8_t MORSE_DECODE(){
 							  {"-....", "6"},
 							  {"--...", "7"},
 							  {"---..", "8"},
-							  {"----.", "9"},
+							  {"----.", "9"}
     };
 
-	for(int i=6; i<=253; i++){
-		input[Empty_Morse_Rx] = SLIP_PAYLOAD[i];
+	for(int i=6; i<249; i++){
+		input[x] = SLIP_PAYLOAD[i];
 		if(SLIP_PAYLOAD[i] == '\0'){
-			Empty_Morse_Rx=0;
+			x=0;
 			break;
 		} else{
-			Empty_Morse_Rx++;
+			x++;
 		}
 	}
-
+	memset(&SLIP_PAYLOAD[0], 0, sizeof(SLIP_PAYLOAD));
+	USART_fsend("Odebrano: ");
     char* segment;
-    int i;
+    volatile static int i=0;
+    volatile static int j=0;
     segment = strtok(input, " ");
 
-    lcd_send_string("Odebrano: ");
-
+    lcd_init();
+    lcd_send_cmd(0x01);
     while(segment)
     {
-        for(i=0; i<=35; ++i)
+        for(i=0; i<35; ++i)
         {
             if (!strcmp(segment, table[i].morse))
-            	{
-            		USART_fsend(table[i].ascii);
-            		lcd_send_string(table[i].ascii);
-            	}
+            {
+            	USART_fsend(table[i].ascii);
+            	testowa[j] = *(table[i].ascii);
+            	j++;
+            }
         }
         segment = strtok(NULL, " ");
     }
     USART_fsend("\r\n");
+    lcd_send_string(testowa);
     return 0;
 }
 
 uint8_t MORSE_DECODE_FOR_BUTTON(){
-    char input[253];
+    char input[249];
     morse_table_t table[] = { {".-", "A"},
                               {"-...", "B"},
                               {"-.-.", "C"},
@@ -477,7 +545,7 @@ uint8_t MORSE_DECODE_FOR_BUTTON(){
 							  {"----.", "9"},
     };
 
-	for(int i=0; i<=255; i++){
+	for(int i=0; i<249; i++){
 		input[Empty_Morse_Rx] = dotsNdashes[i];
 		if(dotsNdashes[i] == '\0'){
 			Empty_Morse_Rx=0;
@@ -487,6 +555,9 @@ uint8_t MORSE_DECODE_FOR_BUTTON(){
 		}
 	}
 
+	memset(&dotsNdashes[0], 0, sizeof(dotsNdashes));
+	USART_fsend("Odebrano: ");
+
     char* segment;
     int i;
     segment = strtok(input, "q");
@@ -494,7 +565,7 @@ uint8_t MORSE_DECODE_FOR_BUTTON(){
 
     while(segment)
     {
-        for(i=0; i<=35; ++i)
+        for(i=0; i<35; ++i)
         {
             if (!strcmp(segment, table[i].morse)) USART_fsend(table[i].ascii);
         }
@@ -581,23 +652,38 @@ void SLIP_processline(){
 		if(strcmp(SLIP_MASTER_ADDR, MASTER_ADDRESS) == 0){
 			if(strcmp(SLIP_SLAVE_ADDR, SLAVE_ADDRESS) == 0){
 				if(strcmp(SLIP_PAYLOAD, "on") == 0){
+					alpha = 1;
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+					  memset(&txMorsetable[0], 0, sizeof(txMorsetable));
+					  emptytxmorsetable=0;
+					  busytxmorsetable=0;
 				}
 				else if(strcmp(SLIP_PAYLOAD, "off") == 0){
+					alpha = 1;
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+					  memset(&txMorsetable[0], 0, sizeof(txMorsetable));
+					  emptytxmorsetable=0;
+					  busytxmorsetable=0;
 				}
 				else if(strncmp(SLIP_PAYLOAD, "morse:", 6) == 0){
 					lcd_send_cmd(0x01);
 					morse_encode();
-					USART_fsend("%s \r\n", MORSE_BUFF_RX);
+					USART_fsend("%s\r\n", txMorsetable);
+					alpha = 0;
 				}
 				else if(strncmp(SLIP_PAYLOAD, "alpha:", 6) == 0){
-					lcd_send_cmd(0x01);
+					alpha = 1;
 					MORSE_DECODE();
+					memset(&txMorsetable[0], 0, sizeof(txMorsetable));
+					emptytxmorsetable=0;
+					busytxmorsetable=0;
 				}
 				else if(strcmp(SLIP_PAYLOAD, "odbierz") == 0){
+					alpha = 1;
+					memset(&txMorsetable[0], 0, sizeof(txMorsetable));
+					emptytxmorsetable=0;
+					busytxmorsetable=0;
 					changeTimeToMorse();
-					USART_fsend("%s \r\n", dotsNdashes);
 					MORSE_DECODE_FOR_BUTTON();
 					memset(&dotsNdashes[0], 0, sizeof(dotsNdashes));
 					memset(&TIMING_TABLE[0], 0, sizeof(TIMING_TABLE));
@@ -606,17 +692,20 @@ void SLIP_processline(){
 					gap_time = 0;
 				}
 				else if(sscanf(SLIP_PAYLOAD, "speed:%d", &speed_dot) == 1){
-					speed_dash = (speed_dot*3);
+					alpha = 1;
+					memset(&txMorsetable[0], 0, sizeof(txMorsetable));
+					emptytxmorsetable=0;
+					busytxmorsetable=0;
+					if(speed_dot >= 100 && speed_dot <= 3000){
+						speed_dash = (speed_dot*3);
+					} else{
+						speed_dot = 250;
+						speed_dash = 750;
+					}
 				}
 			}
 		}
 	}
-	//else if(isStart == 0 || isEnd == 0){
-		//if(x001s > 0){
-			//x001s=0;
-			//USART_fsend("Waiting for data.\r\n");
-		//}
-	//}
 }
 /* USER CODE END 0 */
 
@@ -662,10 +751,102 @@ int main(void)
   while (1)
   {
 	  SLIP_processline();
+
+	  volatile char c = txMorsetable[busytxmorsetable];
+
+	  if(txMorsetable[busytxmorsetable] == '.' && alpha < 1){
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+		  if(dotFlag > 0){
+			  xmsdash=0;
+			  xmsspace=0;
+			  dashFlag=0;
+			  spaceFlag=0;
+			  USART_fsend("%c", c);
+			  dotFlag=0;
+			  lcd_send_string(".");
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+			  busytxmorsetable++;
+		  }
+	  }
+
+	  if(txMorsetable[busytxmorsetable] == 'x' && alpha < 1){
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+		  if(dotFlag > 0){
+			  xmsdash=0;
+			  xmsspace=0;
+			  dashFlag=0;
+			  spaceFlag=0;
+			  dotFlag=0;
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+			  busytxmorsetable++;
+		  }
+	  }
+
+	  if(txMorsetable[busytxmorsetable] == '-' && alpha < 1){
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET);
+		  if(dashFlag > 0){
+			  xmsdot=0;
+			  xmsspace=0;
+			  dotFlag=0;
+			  spaceFlag=0;
+			  USART_fsend("%c", c);
+			  dashFlag=0;
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+			  lcd_send_string("-");
+			  busytxmorsetable++;
+		  }
+	  }
+
+	  if(txMorsetable[busytxmorsetable] == 'y' && alpha < 1){
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+		  if(dashFlag > 0){
+			  xmsdot=0;
+			  xmsspace=0;
+			  dotFlag=0;
+			  spaceFlag=0;
+			  dashFlag=0;
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+			  busytxmorsetable++;
+		  }
+	  }
+
+	  if(txMorsetable[busytxmorsetable] == ' ' && alpha < 1){
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+		  if(spaceFlag > 0){
+			  xmsdot=0;
+			  xmsdash=0;
+			  dashFlag=0;
+			  dotFlag=0;
+			  USART_fsend("%c", c);
+			  spaceFlag=0;
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+			  lcd_send_string(" ");
+			  busytxmorsetable++;
+		  }
+	  }
+
+	  if(txMorsetable[busytxmorsetable] == '\0' && alpha < 1){
+		  lcd_send_cmd(0x01);
+		  alpha = 1;
+		  memset(&txMorsetable[0], 0, sizeof(txMorsetable));
+		  emptytxmorsetable=0;
+		  busytxmorsetable=0;
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+		  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_RESET);
+	  }
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
-
   }
   /* USER CODE END 3 */
 
@@ -688,7 +869,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSICalibrationValue = 16;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI_DIV2;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL16;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL2;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
@@ -703,7 +884,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
